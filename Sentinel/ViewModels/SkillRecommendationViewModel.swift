@@ -14,6 +14,20 @@ final class SkillRecommendationViewModel: ObservableObject {
     @Published var analyzedDays = 7
     @Published var primaryRole = ""
     @Published var selectedCategory: SkillRecommendation.SkillCategory?
+    @Published var generationStatus: String = ""
+    @Published var lastGenerationMode: GenerationMode = .ruleBased
+
+    enum GenerationMode {
+        case ruleBased
+        case llm(model: String)
+
+        var label: String {
+            switch self {
+            case .ruleBased: return "规则推荐"
+            case .llm(let m): return "LLM · \(m)"
+            }
+        }
+    }
 
     private var insightEngine: InsightEngine?
 
@@ -21,6 +35,7 @@ final class SkillRecommendationViewModel: ObservableObject {
         isAnalyzing = true
         errorMessage = nil
         analysisComplete = false
+        generationStatus = "正在分析使用画像…"
 
         let engine = InsightEngine(analytics: analytics)
         insightEngine = engine
@@ -32,9 +47,37 @@ final class SkillRecommendationViewModel: ObservableObject {
             analyzedDays = result.analyzedDays
             primaryRole = result.workflowProfile.primaryRole
 
-            recommendations = SkillCatalog.recommend(from: result)
-            installedSkillIds = SkillGenerator.installedSkillIds()
+            let llmEnabled = UserDefaults.standard.bool(forKey: SentinelConstants.UserDefaultsKeys.llmEnabled)
+            let model = UserDefaults.standard.string(forKey: SentinelConstants.UserDefaultsKeys.llmModel)
+                ?? SentinelConstants.LLMDefaults.defaultModel
+            let apiKey = KeychainHelper.get(account: KeychainAccount.openAIAPIKey) ?? ""
 
+            if llmEnabled && !apiKey.isEmpty {
+                generationStatus = "正在调用 \(model) 为你定制 Skills…"
+                let client = OpenAIClient(apiKey: apiKey, model: model)
+                do {
+                    let llmRecs = try await SkillCatalog.recommendWithLLM(
+                        from: result, analytics: analytics, days: days, client: client
+                    )
+                    recommendations = llmRecs
+                    lastGenerationMode = .llm(model: model)
+                    generationStatus = "由 \(model) 生成"
+                } catch {
+                    errorMessage = "LLM 生成失败，已回退到规则推荐：\(error.localizedDescription)"
+                    recommendations = SkillCatalog.recommend(from: result)
+                    lastGenerationMode = .ruleBased
+                    generationStatus = "规则推荐（LLM 调用失败）"
+                }
+            } else {
+                if llmEnabled && apiKey.isEmpty {
+                    errorMessage = "已开启 LLM 模式但未配置 API Key，使用规则推荐。"
+                }
+                recommendations = SkillCatalog.recommend(from: result)
+                lastGenerationMode = .ruleBased
+                generationStatus = "规则推荐"
+            }
+
+            installedSkillIds = SkillGenerator.installedSkillIds()
             isAnalyzing = false
             analysisComplete = true
         }

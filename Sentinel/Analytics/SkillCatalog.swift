@@ -2,7 +2,30 @@ import Foundation
 
 struct SkillCatalog {
 
-    // MARK: - Match insights to skill recommendations
+    // MARK: - LLM-driven recommendation (primary path)
+
+    /// Generates skill recommendations using an LLM that consumes the user's full analysis profile.
+    /// Built-in OpenClaw skills (github, slack, notion, ...) are still surfaced via rule matching
+    /// because they are platform-bound and don't need LLM creativity.
+    @MainActor
+    static func recommendWithLLM(from result: InsightEngine.AnalysisResult,
+                                 analytics: AnalyticsEngine,
+                                 days: Int,
+                                 client: OpenAIClient) async throws -> [SkillRecommendation] {
+        async let llmTask: [SkillRecommendation] = {
+            let generator = LLMSkillGenerator(client: client)
+            return try await generator.generate(from: result, analytics: analytics, days: days)
+        }()
+
+        let builtIns = matchBuiltInSkills(result)
+        let llmSkills = try await llmTask
+
+        var all = builtIns + llmSkills
+        all.sort { $0.matchScore > $1.matchScore }
+        return all
+    }
+
+    // MARK: - Rule-based recommendation (fallback when no API key / LLM unavailable)
 
     static func recommend(from result: InsightEngine.AnalysisResult) -> [SkillRecommendation] {
         var all: [SkillRecommendation] = []

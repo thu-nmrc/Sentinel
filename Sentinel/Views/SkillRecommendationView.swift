@@ -66,9 +66,56 @@ struct SkillRecommendationView: View {
 
             if viewModel.analysisComplete {
                 insightChips
+                generationBanner
+            }
+            if let err = viewModel.errorMessage {
+                errorBanner(err)
             }
         }
         .padding(24)
+    }
+
+    private var generationBanner: some View {
+        HStack(spacing: 8) {
+            Image(systemName: isLLMMode ? "sparkles" : "list.bullet.rectangle")
+                .font(.system(size: 11))
+                .foregroundStyle(isLLMMode ? Color.purple : Color.secondary)
+            Text(viewModel.generationStatus.isEmpty ? viewModel.lastGenerationMode.label : viewModel.generationStatus)
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+            Spacer()
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background((isLLMMode ? Color.purple : Color.secondary).opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+
+    private var isLLMMode: Bool {
+        if case .llm = viewModel.lastGenerationMode { return true }
+        return false
+    }
+
+    private func errorBanner(_ message: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+            Text(message)
+                .font(.caption)
+                .foregroundStyle(.primary)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+            Button {
+                viewModel.errorMessage = nil
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .foregroundStyle(.tertiary)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(10)
+        .background(Color.orange.opacity(0.1))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
     private var insightChips: some View {
@@ -109,12 +156,15 @@ struct SkillRecommendationView: View {
             Spacer()
             ProgressView()
                 .scaleEffect(1.3)
-            Text("正在分析最近 \(analysisDays) 天的使用数据...")
+            Text(viewModel.generationStatus.isEmpty
+                 ? "正在分析最近 \(analysisDays) 天的使用数据..."
+                 : viewModel.generationStatus)
                 .font(.headline)
                 .foregroundStyle(.secondary)
-            Text("分析应用使用、文件操作、窗口标题等痕迹")
+            Text("分析应用使用、文件操作、窗口标题，并交给 AI 个性化生成 Skills")
                 .font(.subheadline)
                 .foregroundStyle(.tertiary)
+                .multilineTextAlignment(.center)
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

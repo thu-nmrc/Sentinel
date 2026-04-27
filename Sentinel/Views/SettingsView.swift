@@ -10,10 +10,18 @@ struct SettingsView: View {
     @AppStorage(SentinelConstants.UserDefaultsKeys.screenshotQuality) private var screenshotQuality = 0.75
     @AppStorage(SentinelConstants.UserDefaultsKeys.screenshotRetentionDays) private var screenshotRetentionDays = 14
     @AppStorage(SentinelConstants.UserDefaultsKeys.databaseRetentionDays) private var databaseRetentionDays = 90
+    @AppStorage(SentinelConstants.UserDefaultsKeys.llmEnabled) private var llmEnabled = false
+    @AppStorage(SentinelConstants.UserDefaultsKeys.llmModel) private var llmModel = SentinelConstants.LLMDefaults.defaultModel
 
     @State private var storageBytes: Int64 = 0
     @State private var showCleanConfirm = false
     @State private var cleanMessage: String?
+    @State private var apiKeyDraft: String = ""
+    @State private var apiKeySaved: Bool = false
+    @State private var apiKeyTestState: APIKeyTestState = .idle
+    @State private var apiKeyTestMessage: String = ""
+
+    enum APIKeyTestState { case idle, testing, success, failure }
 
     var body: some View {
         TabView {
@@ -23,17 +31,21 @@ struct SettingsView: View {
             storageTab
                 .tabItem { Label("Storage", systemImage: "internaldrive.fill") }
 
+            aiTab
+                .tabItem { Label("AI", systemImage: "sparkles") }
+
             permissionsTab
                 .tabItem { Label("Permissions", systemImage: "lock.shield.fill") }
 
             aboutTab
                 .tabItem { Label("About", systemImage: "info.circle.fill") }
         }
-        .frame(width: 620, height: 480)
+        .frame(width: 620, height: 520)
         .padding(8)
         .onAppear {
             syncLaunchAtLoginState()
             refreshStorageUsage()
+            loadAPIKeyDraft()
         }
         .alert("Clean Old Data", isPresented: $showCleanConfirm) {
             Button("Cancel", role: .cancel) {}
@@ -150,6 +162,140 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
+    private var aiTab: some View {
+        Form {
+            Section {
+                VStack(alignment: .leading, spacing: 8) {
+                    Toggle("使用 LLM 个性化生成 Skills", isOn: $llmEnabled)
+                    Text(llmEnabled
+                         ? "Skill 推荐由 OpenAI 模型基于你的真实使用画像动态生成。"
+                         : "目前使用本地规则推荐。打开开关后改用 LLM 生成更贴合你工作流的 Skills。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            } header: {
+                Text("生成模式")
+            }
+
+            Section {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("OpenAI API Key")
+                        Spacer()
+                        if apiKeySaved {
+                            Label("已保存到 Keychain", systemImage: "checkmark.seal.fill")
+                                .font(.caption)
+                                .foregroundStyle(.green)
+                        }
+                    }
+                    SecureField("sk-...", text: $apiKeyDraft)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(.body, design: .monospaced))
+                    HStack(spacing: 8) {
+                        Button("保存") { saveAPIKey() }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(apiKeyDraft.isEmpty)
+                        Button("测试连接") { testAPIKey() }
+                            .disabled(apiKeyDraft.isEmpty || apiKeyTestState == .testing)
+                        if apiKeySaved {
+                            Button(role: .destructive) { clearAPIKey() } label: {
+                                Text("移除")
+                            }
+                        }
+                        Spacer()
+                        if apiKeyTestState == .testing {
+                            ProgressView().controlSize(.small)
+                        }
+                    }
+                    if !apiKeyTestMessage.isEmpty {
+                        HStack(spacing: 6) {
+                            Image(systemName: apiKeyTestState == .success ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                                .foregroundStyle(apiKeyTestState == .success ? .green : .orange)
+                            Text(apiKeyTestMessage)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    Text("Key 仅保存在本机 Keychain。Sentinel 仅在你点击「分析」时把使用画像发送给 OpenAI 用于生成 Skills。")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+            } header: {
+                Text("OpenAI 凭据")
+            }
+
+            Section {
+                Picker("模型", selection: $llmModel) {
+                    ForEach(SentinelConstants.LLMDefaults.availableModels, id: \.self) { m in
+                        Text(m).tag(m)
+                    }
+                }
+                Text("成本与质量参考：gpt-4o-mini 最便宜，gpt-4.1 / gpt-4o 更细致，o4-mini / o3-mini 推理更强。")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            } header: {
+                Text("模型选择")
+            }
+        }
+        .formStyle(.grouped)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
+    private func loadAPIKeyDraft() {
+        if let stored = KeychainHelper.get(account: KeychainAccount.openAIAPIKey), !stored.isEmpty {
+            apiKeyDraft = stored
+            apiKeySaved = true
+        } else {
+            apiKeySaved = false
+        }
+    }
+
+    private func saveAPIKey() {
+        let trimmed = apiKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        do {
+            try KeychainHelper.set(trimmed, account: KeychainAccount.openAIAPIKey)
+            apiKeyDraft = trimmed
+            apiKeySaved = true
+            apiKeyTestState = .idle
+            apiKeyTestMessage = "已保存。"
+        } catch {
+            apiKeyTestState = .failure
+            apiKeyTestMessage = "保存失败：\(error.localizedDescription)"
+        }
+    }
+
+    private func clearAPIKey() {
+        KeychainHelper.delete(account: KeychainAccount.openAIAPIKey)
+        apiKeyDraft = ""
+        apiKeySaved = false
+        apiKeyTestState = .idle
+        apiKeyTestMessage = "已移除。"
+    }
+
+    private func testAPIKey() {
+        let trimmed = apiKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        apiKeyTestState = .testing
+        apiKeyTestMessage = "正在请求 /v1/models …"
+        let client = OpenAIClient(apiKey: trimmed, model: llmModel)
+        Task {
+            do {
+                let models = try await client.listModels()
+                await MainActor.run {
+                    apiKeyTestState = .success
+                    let preview = models.prefix(6).joined(separator: ", ")
+                    apiKeyTestMessage = "连接成功，可见 \(models.count) 个模型，例如：\(preview)"
+                }
+            } catch {
+                await MainActor.run {
+                    apiKeyTestState = .failure
+                    apiKeyTestMessage = error.localizedDescription
+                }
+            }
+        }
     }
 
     private var permissionsTab: some View {

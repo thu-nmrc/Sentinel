@@ -39,5 +39,19 @@ enum SentinelConstants {
         static let screenshotQuality = "screenshotQuality"
         static let todayRecordingSeconds = "todayRecordingSeconds"
         static let todayRecordingDayKey = "todayRecordingDayKey"
+        static let llmEnabled = "llmEnabled"
+        static let llmModel = "llmModel"
+    }
+
+    enum LLMDefaults {
+        static let defaultModel = "gpt-4o-mini"
+        static let availableModels: [String] = [
+            "gpt-4o-mini",
+            "gpt-4o",
+            "gpt-4.1-mini",
+            "gpt-4.1",
+            "o4-mini",
+            "o3-mini"
+        ]
     }
 }
